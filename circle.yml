@@ -1,0 +1,9 @@
+dependencies:
+  pre:
+    pip install awscli==1.7.14
+
+deployment:
+  publish:
+    branch: master
+    commands:
+      - ./up.sh $TARGET_ENVIRONMENT
