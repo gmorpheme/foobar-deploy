@@ -1,6 +1,6 @@
 dependencies:
   pre:
-    - pip install awscli==1.7.14
+    - pip install awscli
 
 deployment:
   publish:
