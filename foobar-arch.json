@@ -1,0 +1,174 @@
+{
+  "Description" : "Foobar Stack",
+
+  "Parameters" : {
+    "Profile" : {
+      "Description" : "TEST (micro) or PROD (small)",
+      "Type" : "String",
+      "Default" : "TEST",
+      "AllowedValues" : [ "TEST", "PROD" ]
+    },
+    "DnsMangler" : {
+      "Description" : "For test instances mangle the dns with a prefix so as not to interfere with prod dns.",
+      "Type" : "String",
+      "Default" : ""
+    }
+  },
+
+  "Mappings" : {
+    "InstanceAttrMap" : {
+      "TEST" : { "InstanceType" : "t2.micro",
+                 "ImageId" : "ami-f4853883" },
+      "PROD" : { "InstanceType" : "t2.small",
+                 "ImageId" : "ami-f4853883" }
+    }
+  },
+
+  "Resources" : {
+
+    "FoobarInstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path": "/",
+        "Policies": [ {
+          "PolicyName": "AllPerms",
+          "PolicyDocument": {
+            "Version" : "2012-10-17",
+            "Statement": [ {
+              "Effect": "Allow",
+              "Action": "*",
+              "Resource": "*"
+            } ]
+          }
+        } ]
+      }
+    },
+
+    "FoobarIamProfile" : {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ { "Ref" : "FoobarInstanceRole" } ]
+      }
+    },
+
+    "FoobarMachine" : {
+
+      "Type" : "AWS::EC2::Instance",
+      "Metadata" : {
+        "Profile" : { "Ref" : "Profile" }
+      },
+      "Properties" : {
+        "SecurityGroups" : [ { "Ref" : "FoobarSecurityGroup"}],
+        "ImageId" : { "Fn::FindInMap" : [ "InstanceAttrMap" , { "Ref" : "Profile" }, "ImageId"] },
+        "IamInstanceProfile" : { "Ref" : "FoobarIamProfile" },
+        "InstanceType" : { "Fn::FindInMap" : [ "InstanceAttrMap" , { "Ref" : "Profile" }, "InstanceType"] },
+        "KeyName" : "curvelogic-greg",
+        "AvailabilityZone" : "eu-west-1a",
+        "Tags" : [ { "Key" : "Name", "Value" : "Foobar" } ],
+        "Monitoring" : "true",
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#cloud-config\n",
+          "coreos:\n",
+          "  etcd:\n",
+          "    discovery: https://discovery.etcd.io/de817f5dae06f7856035e49b3355c4ec\n",
+          "    addr: $private_ipv4:4001\n",
+          "    peer-addr: $private_ipv4:7001\n",
+          "  units:\n",
+          "    - name: etcd.service\n",
+          "      command: start\n",
+          "    - name: fleet.service\n",
+          "      command: start\n",
+          "    - name: foobar-txn.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Run foobar-txn service\n",
+          "        \n",
+          "        [Service]\n",
+          "        TimeoutStartSec=0\n",
+          "        WorkingDirectory=/root\n",
+          "        ExecStartPre=-/usr/bin/docker kill txn \n",
+          "        ExecStartPre=-/usr/bin/docker rm txn \n",
+          "        ExecStartPre=-/usr/bin/docker pull gmorpheme/foobar-txn\n",
+          "        ExecStart=/usr/bin/docker run --name txn -p 80:9000 gmorpheme/foobar-txn",
+          "        \n",
+          "\n"
+        ]]}}
+      }
+    },
+
+    "FoobarSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Web and Shell access",
+        "SecurityGroupIngress" : [
+          {
+            "IpProtocol" : "tcp",
+            "FromPort"   : "22",
+            "ToPort"     : "22",
+            "CidrIp"     : "0.0.0.0/0"
+          },
+          {
+            "IpProtocol" : "tcp",
+            "FromPort"   : "80",
+            "ToPort"     : "80",
+            "CidrIp"     : "0.0.0.0/0"
+          },
+          {
+            "IpProtocol" : "tcp",
+            "FromPort"   : "443",
+            "ToPort"     : "443",
+            "CidrIp"     : "0.0.0.0/0"
+          },                                  
+          {
+            "IpProtocol" : "tcp",
+            "FromPort"   : "9000",
+            "ToPort"     : "9000",
+            "CidrIp"     : "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "FoobarServerEndpoint" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "InstanceId" : { "Ref" : "FoobarMachine"}
+      }
+    },
+
+    "FoobarServerDNS": {
+      "Type" : "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneName": "curvelogic.org.",
+        "Name": { "Fn::Join" : ["-" , [ { "Ref" : "DnsMangler" }, "foobar.curvelogic.org."] ] },
+        "Type": "A",
+        "TTL" : "900",
+        "ResourceRecords": [{ "Ref" : "FoobarServerEndpoint" }]
+      }
+    }
+    
+  },
+
+  "Outputs" : {
+    "IPAddress" : {
+      "Value" : { "Ref" : "FoobarServerEndpoint" },
+      "Description" : "IP address of the development machine"
+    },
+    "DNSName": {
+      "Value" : { "Ref" : "FoobarServerDNS" },
+      "Description" : "DNS name of Foobar Server"
+    }
+  }
+}
